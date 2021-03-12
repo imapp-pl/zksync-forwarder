@@ -2,7 +2,7 @@
 
 ## Install
 
-Install Node (requires version 14.14.0 or higher). We suggest you to install [nvm](https://github.com/nvm-sh/nvm).
+Install Node (requires version 14 or higher, run `node --version`). We suggest you to install [nvm](https://github.com/nvm-sh/nvm).
 
 ```
 npm install express
