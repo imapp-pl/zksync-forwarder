@@ -1,10 +1,10 @@
-const fwdPrivateKey = '0x03e6cff5924d435791fb9cd1db7ecce6455475429277869aae39ee3e339fd15b';
-const fwdAddress = '0xFb4BF0D377D68Bc952E686494254BBC468f0e0d0';
-const zksyncJsrpcEndpoint = 'https://rinkeby-api.zksync.io/jsrpc';
-const glmSymbol = 'GNT';
-const subsidizedFeeRate = 20;    // how much of a fee a client pays, in percent (100 means no subsidies)
-const zksyncAddress = 'rinkeby';
-const serverPort = 3030;
+const fwdPrivateKey = process.env.FWD_PRIVATE_KEY ?? '0x03e6cff5924d435791fb9cd1db7ecce6455475429277869aae39ee3e339fd15b';
+const fwdAddress = process.env.FWD_ADDRESS ?? '0xFb4BF0D377D68Bc952E686494254BBC468f0e0d0';
+const zksyncJsrpcEndpoint = process.env.FWD_JSRPC_ENDPOINT ?? 'https://rinkeby-api.zksync.io/jsrpc';
+const glmSymbol = process.env.FWD_GLM_SYMBOL ?? 'GNT';
+const subsidizedFeeRate = process.env.FWD_SUBSIDIZED_FEE_RATE ?? 20;    // how much of a fee a client pays, in percent (100 means no subsidies)
+const zksyncAddress = process.env.FWD_ZKSYNC_ADDRESS ?? 'rinkeby';
+const serverPort = process.env.FWD_SERVER_PORT ?? 3030;
 
 
 const express = require("express");
