@@ -1,0 +1,20 @@
+{
+  "name": "zksync-forwarder",
+  "version": "1.0.0",
+  "description": "zksync forwarder for yagna/golem",
+  "main": "forwarder.js",
+  "dependencies": {
+    "ethers": "^5.0.32",
+    "express": "^4.17.1",
+    "json-rpc-2.0": "^0.2.15",
+    "node-fetch": "^2.6.1",
+    "zksync": "^0.10.5"
+  },
+  "keywords": [
+    "zksync",
+    "yagna",
+    "golem"
+  ],
+  "author": "lukasz-glen",
+  "license": "GPLV3"
+}
