@@ -59,7 +59,7 @@ server.addMethod("tokens", () => {
     return client.request("tokens",);
 });
 server.addMethod("get_tx_fee", (req) => {
-        return client.request("get_tx_fee", req).then(function(tx_fee) {
+    return client.request("get_tx_fee", req).then(function(tx_fee) {
 		token = req[2];
 		if (token != glmSymbol || req[0] != 'Transfer') {
 			return tx_fee;
@@ -81,7 +81,6 @@ server.addMethod("tx_info", (req) => {
     return client.request("tx_info", req);
 });
 server.addMethod("tx_submit", (req) => {
-	console.log("tx", req);
 	if (req[0].type != 'Transfer') {
 		return client.request("tx_submit", req);
 	}
@@ -98,11 +97,11 @@ server.addMethod("tx_submit", (req) => {
                 return client.request("tx_submit", req);
 		    }
 		    if (bn_rcv_client_fee.lt(bn_subs_client_fee)) {   // client's fee is too low, we pass tx anyway but subsidising is limited
-		        bn_batch_fee = bn_exp_client_fee.add(bn_exp_fwd_fee).sub(bn_subs_client_fee);
+		        bn_batch_fee_unpacked = bn_exp_client_fee.add(bn_exp_fwd_fee).sub(bn_subs_client_fee);
 		    } else {
-		        bn_batch_fee = bn_exp_client_fee.add(bn_exp_fwd_fee).sub(bn_rcv_client_fee);
-		        cptf = zksync.utils.closestPackableTransactionFee(bn_batch_fee);
+		        bn_batch_fee_unpacked = bn_exp_client_fee.add(bn_exp_fwd_fee).sub(bn_rcv_client_fee);
 		    }
+		    bn_batch_fee = zksync.utils.closestGreaterOrEqPackableTransactionFee(bn_batch_fee_unpacked);
 		    return syncWallet.getNonce().then(function(fwd_nonce){  //TODO worth to sync this
 		        fwd_transfer = {             // sign forwarder's transaction
                         to: fwdAddress,
@@ -117,9 +116,9 @@ server.addMethod("tx_submit", (req) => {
                             {"tx": signed_fwd_transfer.tx, "signature": signed_fwd_transfer.ethereumSignature}
                         ];
                     return client.request("submit_txs_batch", [batch, []]).then(function(res){   // send batch
-                        console.log("batch res", res);
                         return syncWallet.getNonce().then(function(fwd_nonce2){
-                        return res[0];   //TODO wait for my tx
+                            //console.log('nonce2', fwd_nonce2);
+                            return res[0];   //TODO wait for my tx
                         });
                     });
                 });
@@ -137,6 +136,8 @@ app.post("", (req, res) => {
     // server.receive takes a JSON-RPC request and returns a promise of a JSON-RPC response.
     server.receive(jsonRPCRequest).then((jsonRPCResponse) => {
         if (jsonRPCResponse) {
+            console.log("client request", jsonRPCRequest);
+            console.log("response", jsonRPCResponse);
             res.json(jsonRPCResponse);
         } else {
             // If response is absent, it was a JSON-RPC notification method.
