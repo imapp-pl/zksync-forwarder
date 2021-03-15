@@ -1,5 +1,5 @@
-const fwdPrivateKey = process.env.FWD_PRIVATE_KEY ?? '0x03e6cff5924d435791fb9cd1db7ecce6455475429277869aae39ee3e339fd15b';
-const fwdAddress = process.env.FWD_ADDRESS ?? '0xFb4BF0D377D68Bc952E686494254BBC468f0e0d0';
+const fwdPrivateKey = process.env.FWD_PRIVATE_KEY ?? '0x36a383971dd01933b98252c087aa13e351fbb97424fa695a70a0c26d4296f99f';
+const fwdAddress = process.env.FWD_ADDRESS ?? '0xE6a4157Ab958de300A5E894487B4a745e936f41a';
 const zksyncJsrpcEndpoint = process.env.FWD_JSRPC_ENDPOINT ?? 'https://rinkeby-api.zksync.io/jsrpc';
 const glmSymbol = process.env.FWD_GLM_SYMBOL ?? 'GNT';
 const subsidizedFeeRate = process.env.FWD_SUBSIDIZED_FEE_RATE ?? 20;    // how much of a fee a client pays, in percent (100 means no subsidies)
@@ -14,7 +14,7 @@ const { JSONRPCClient } = require("json-rpc-2.0");
 const fetch = require('node-fetch');
 const ethers = require('ethers');
 const zksync = require('zksync');
-
+const Semaphore = require('async-mutex').Semaphore;
 
 var syncProvider;
 var gntTokenId;
@@ -47,10 +47,14 @@ const client = new JSONRPCClient((jsonRPCRequest) =>
 
 
 const server = new JSONRPCServer();
+const nonce_semaphore = new Semaphore(1);
 
 server.addMethod("echo", (obj) => {
     console.log("echo", obj);
     return obj;
+});
+server.addMethod("fwd_status", () => {
+    return {"nonce_semaphore_locked": nonce_semaphore.isLocked()};
 });
 server.addMethod("contract_address", () => {
 	return client.request("contract_address",);
@@ -102,26 +106,36 @@ server.addMethod("tx_submit", (req) => {
 		        bn_batch_fee_unpacked = bn_exp_client_fee.add(bn_exp_fwd_fee).sub(bn_rcv_client_fee);
 		    }
 		    bn_batch_fee = zksync.utils.closestGreaterOrEqPackableTransactionFee(bn_batch_fee_unpacked);
-		    return syncWallet.getNonce().then(function(fwd_nonce){  //TODO worth to sync this
-		        fwd_transfer = {             // sign forwarder's transaction
-                        to: fwdAddress,
-                        token: glmSymbol,
-                        amount: ethers.utils.parseEther("0.0"),
-                        fee: bn_batch_fee,
-                        nonce: fwd_nonce
-                    };
-		        return syncWallet.signSyncTransfer(fwd_transfer).then(function(signed_fwd_transfer){
-                    batch = [
-                            {"tx": req[0], "signature": req[1]},
-                            {"tx": signed_fwd_transfer.tx, "signature": signed_fwd_transfer.ethereumSignature}
-                        ];
-                    return client.request("submit_txs_batch", [batch, []]).then(function(res){   // send batch
-                        return syncWallet.getNonce().then(function(fwd_nonce2){
-                            //console.log('nonce2', fwd_nonce2);
-                            return res[0];   //TODO wait for my tx
+		    return nonce_semaphore.acquire().then(function([sem_value, sem_release]) {  // acquire the semaphore
+		        try {
+		            return syncWallet.getNonce().then(function(fwd_nonce){
+		                fwd_transfer = {             // sign forwarder's transaction
+                                to: fwdAddress,
+                                token: glmSymbol,
+                                amount: ethers.utils.parseEther("0.0"),
+                                fee: bn_batch_fee,
+                                nonce: fwd_nonce
+                            };
+		                return syncWallet.signSyncTransfer(fwd_transfer).then(function(signed_fwd_transfer){
+                            batch = [
+                                    {"tx": req[0], "signature": req[1]},
+                                    {"tx": signed_fwd_transfer.tx, "signature": signed_fwd_transfer.ethereumSignature}
+                                ];
+                            return client.request("submit_txs_batch", [batch, []]).then(function(batch_resp){   // send batch
+                                client.request("tx_info", [batch_resp[1]]).finally(function(){
+                                    sem_release();                               // release the semaphore when the transaction is added to a block
+                                });
+                                return batch_resp[0];
+                            });
                         });
-                    });
-                });
+		            }).catch(function(err){
+		                sem_release();                 // release the semaphore in case of an exception
+		                throw err;
+		            });
+		        } catch (er) {
+		            sem_release();            // just in case
+		            throw er;
+		        }
 		    });
 		});
 	});

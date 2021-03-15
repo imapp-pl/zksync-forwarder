@@ -4,6 +4,7 @@
   "description": "zksync forwarder for yagna/golem",
   "main": "forwarder.js",
   "dependencies": {
+    "async-mutex": "^0.3.1",
     "ethers": "^5.0.32",
     "express": "^4.17.1",
     "json-rpc-2.0": "^0.2.15",

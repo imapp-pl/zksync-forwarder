@@ -10,6 +10,7 @@ npm install json-rpc-2.0
 npm install node-fetch
 npm install ethers
 npm install zksync
+npm install async-mutex
 ```
 
 ## Configure
