@@ -73,7 +73,7 @@ server.addMethod("get_tx_fee", (req) => {
 		if (token != glmSymbol && token != gntTokenId) {
 			return tx_fee;
 		}
-		if (typeof req[0] == 'object') {
+		if (typeof req[0] == 'object') {    // change pub key
 			return tx_fee;
 		} else {
 		    if (req[0] != 'Transfer') {
@@ -97,10 +97,14 @@ server.addMethod("tx_info", (req) => {
     return client.request("tx_info", req);
 });
 server.addMethod("tx_submit", (req) => {
-	if (req[0].type != 'Transfer') {
+	if (typeof req[0].type == 'object') {    // change pub key
 		return client.request("tx_submit", req);
+	} else {
+		if (req[0].type != 'Transfer') {
+			return client.request("tx_submit", req);
+		}
 	}
-	if (req[0].token != gntTokenId) {
+	if (req[0].token != glmSymbol && req[0].token != gntTokenId) {
         return client.request("tx_submit", req);
 	}
 	return client.request("get_tx_fee", ["Transfer", req[0].to, glmSymbol]).then(function(exp_client_tx_fee){
