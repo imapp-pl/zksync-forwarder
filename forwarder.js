@@ -1,7 +1,7 @@
 const fwdPrivateKey = process.env.FWD_PRIVATE_KEY ?? '0x36a383971dd01933b98252c087aa13e351fbb97424fa695a70a0c26d4296f99f';
 const fwdAddress = process.env.FWD_ADDRESS ?? '0xE6a4157Ab958de300A5E894487B4a745e936f41a';
 const zksyncJsrpcEndpoint = process.env.FWD_JSRPC_ENDPOINT ?? 'https://rinkeby-api.zksync.io/jsrpc';
-const glmSymbol = process.env.FWD_GLM_SYMBOL ?? 'GNT';
+const glmSymbol = process.env.FWD_GLM_SYMBOL ?? 'tGLM';
 const subsidizedFeeRate = process.env.FWD_SUBSIDIZED_FEE_RATE ?? 20;    // how much of a fee a client pays, in percent (100 means no subsidies)
 const zksyncAddress = process.env.FWD_ZKSYNC_ADDRESS ?? 'rinkeby';
 const serverPort = process.env.FWD_SERVER_PORT ?? 3030;
@@ -70,8 +70,15 @@ server.addMethod("tokens", () => {
 server.addMethod("get_tx_fee", (req) => {
     return client.request("get_tx_fee", req).then(function(tx_fee) {
 		token = req[2];
-		if ((token != glmSymbol && token != gntTokenId) || req[0] != 'Transfer') {
+		if (token != glmSymbol && token != gntTokenId) {
 			return tx_fee;
+		}
+		if (typeof req[0] == 'object') {
+			return tx_fee;
+		} else {
+		    if (req[0] != 'Transfer') {
+			    return tx_fee;
+		    }
 		}
 		bn_fee = ethers.BigNumber.from(tx_fee.totalFee);
 		bn_subs_fee = zksync.utils.closestPackableTransactionFee(bn_fee.mul(subsidizedFeeRate).div(100));
