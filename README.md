@@ -4,13 +4,26 @@
 
 Install Node (requires version 14 or higher, run `node --version`). We suggest you to install [nvm](https://github.com/nvm-sh/nvm).
 
-```
+```shell
 npm install express
 npm install json-rpc-2.0
 npm install node-fetch
 npm install ethers
 npm install zksync
 npm install async-mutex
+npm install json-bigint
+```
+
+Default JSON parser cannot handle big integers, what is required
+in our case.
+We need to replace default parser with JSONbig and we have to replace
+it manually in the libraries. Run
+
+```shell
+sed -i '1s/^/var JSONbig = require('json-bigint'); \n/' node_modules/express/lib/response.js
+sed -i 's/JSON\./JSONbig./g' node_modules/express/lib/response.js
+sed -i '1s/^/var JSONbig = require('json-bigint'); \n/' node_modules/body-parser/lib/types/json.js
+sed -i 's/JSON\./JSONbig./g' node_modules/body-parser/lib/types/json.js
 ```
 
 ## Configure

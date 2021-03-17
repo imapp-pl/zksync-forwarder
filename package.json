@@ -7,6 +7,7 @@
     "async-mutex": "^0.3.1",
     "ethers": "^5.0.32",
     "express": "^4.17.1",
+    "json-bigint": "^1.0.0",
     "json-rpc-2.0": "^0.2.15",
     "node-fetch": "^2.6.1",
     "zksync": "^0.10.5"

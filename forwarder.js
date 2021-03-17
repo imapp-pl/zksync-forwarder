@@ -15,6 +15,7 @@ const fetch = require('node-fetch');
 const ethers = require('ethers');
 const zksync = require('zksync');
 const Semaphore = require('async-mutex').Semaphore;
+const JSONbig = require('json-bigint');
 
 var syncProvider;
 var gntTokenId;
@@ -31,13 +32,17 @@ const client = new JSONRPCClient((jsonRPCRequest) =>
         headers: {
             "content-type": "application/json",
         },
-        body: JSON.stringify(jsonRPCRequest),
+        body: JSONbig.stringify(jsonRPCRequest),
     }).then((response) => {
         if (response.status === 200) {
+            console.log("sent", JSONbig.stringify(jsonRPCRequest));
             // Use client.receive when you received a JSON-RPC response.
             return response
-                .json()
-                .then((jsonRPCResponse) => client.receive(jsonRPCResponse));
+                .json()     // TODO this does not use JSONbig
+                .then((jsonRPCResponse) => {
+                    console.log("received", jsonRPCResponse);
+                    client.receive(jsonRPCResponse);
+                });
         } else if (jsonRPCRequest.id !== undefined) {
             return Promise.reject(new Error(response.statusText));
         }
@@ -146,13 +151,13 @@ const app = express();
 app.use(bodyParser.json());
 
 app.post("", (req, res) => {
-    const jsonRPCRequest = req.body;
+    const jsonRPCRequest = req.body;          // body is already parsed
     // server.receive takes a JSON-RPC request and returns a promise of a JSON-RPC response.
     server.receive(jsonRPCRequest).then((jsonRPCResponse) => {
         if (jsonRPCResponse) {
             console.log("client request", jsonRPCRequest);
             console.log("response", jsonRPCResponse);
-            res.json(jsonRPCResponse);
+            res.json(jsonRPCResponse);           //stringifies and sets headers
         } else {
             // If response is absent, it was a JSON-RPC notification method.
             // Respond with no content status (204).
