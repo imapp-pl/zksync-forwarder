@@ -70,7 +70,7 @@ server.addMethod("tokens", () => {
 server.addMethod("get_tx_fee", (req) => {
     return client.request("get_tx_fee", req).then(function(tx_fee) {
 		token = req[2];
-		if (token != glmSymbol || req[0] != 'Transfer') {
+		if ((token != glmSymbol && token != gntTokenId) || req[0] != 'Transfer') {
 			return tx_fee;
 		}
 		bn_fee = ethers.BigNumber.from(tx_fee.totalFee);
