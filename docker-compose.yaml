@@ -1,0 +1,14 @@
+version: '3.7'
+
+services:
+  zksync-forwarder:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "3030:3030"
+    command:
+      - node
+      - forwarder.js
+    env_file: .env
+
