@@ -58,15 +58,19 @@ server.addMethod("echo", (obj) => {
     console.log("echo", obj);
     return obj;
 });
+
 server.addMethod("fwd_status", () => {
     return {"nonce_semaphore_locked": nonce_semaphore.isLocked()};
 });
+
 server.addMethod("contract_address", () => {
 	return client.request("contract_address",);
 });
+
 server.addMethod("tokens", () => {
     return client.request("tokens",);
 });
+
 server.addMethod("get_tx_fee", (req) => {
     return client.request("get_tx_fee", req).then(function(tx_fee) {
 		token = req[2];
@@ -87,15 +91,45 @@ server.addMethod("get_tx_fee", (req) => {
 		return tx_fee;
 	});
 });
+
 server.addMethod("get_txs_batch_fee_in_wei", (req) => {
     return client.request("get_txs_batch_fee_in_wei", req);
 });
+
 server.addMethod("account_info", (req) => {
     return client.request("account_info", req);
 });
+
 server.addMethod("tx_info", (req) => {
     return client.request("tx_info", req);
 });
+
+function ensure_tx_status(tx_hash, depth, sem_release) {
+	req = client.request("tx_info", [tx_hash]);
+	req.then(function(tx_status){
+		if (tx_status.executed) {   // if the transaction was executed, whether successfully or not
+			sem_release();                               // release the semaphore when the transaction is added to a block or not
+		} else {
+                	if (depth < 5) {
+				console.log("must check tx status again");
+                        	ensure_tx_status(tx_hash, depth + 1, sem_release);
+                	} else {
+				console.log("releasing the semaphore, too many tries");
+                        	sem_release();                               // give up and release the semaphore
+                	}
+		}
+	})
+	.catch(function(err){
+		console.log("err", err);
+		if (depth < 5) {
+			ensure_tx_status(tx_hash, depth + 1, sem_release);
+		} else {
+			console.log("releasing the semaphore, too many errs");
+			sem_release();                               // give up and release the semaphore
+		}
+	});
+}
+
 server.addMethod("tx_submit", (req) => {
 	if (typeof req[0].type == 'object') {    // change pub key
 		return client.request("tx_submit", req);
@@ -105,7 +139,7 @@ server.addMethod("tx_submit", (req) => {
 		}
 	}
 	if (req[0].token != glmSymbol && req[0].token != gntTokenId) {
-        return client.request("tx_submit", req);
+                return client.request("tx_submit", req);
 	}
 	return client.request("get_tx_fee", ["Transfer", req[0].to, glmSymbol]).then(function(exp_client_tx_fee){
 		bn_exp_client_fee = ethers.BigNumber.from(exp_client_tx_fee.totalFee);
@@ -114,7 +148,7 @@ server.addMethod("tx_submit", (req) => {
 		    bn_exp_fwd_fee = ethers.BigNumber.from(exp_fwd_tx_fee.totalFee);
 		    bn_rcv_client_fee = ethers.BigNumber.from(req[0].fee);
 		    if (bn_rcv_client_fee.gte(bn_exp_client_fee)) {  // if it does not need subsidizing
-                return client.request("tx_submit", req);
+                        return client.request("tx_submit", req);
 		    }
 		    if (bn_rcv_client_fee.lt(bn_subs_client_fee)) {   // client's fee is too low, we pass tx anyway but subsidising is limited
 		        bn_batch_fee_unpacked = bn_exp_client_fee.add(bn_exp_fwd_fee).sub(bn_subs_client_fee);
@@ -126,24 +160,22 @@ server.addMethod("tx_submit", (req) => {
 		        try {
 		            return syncWallet.getNonce().then(function(fwd_nonce){
 		                fwd_transfer = {             // sign forwarder's transaction
-                                to: fwdAddress,
-                                token: glmSymbol,
-                                amount: ethers.utils.parseEther("0.0"),
-                                fee: bn_batch_fee,
-                                nonce: fwd_nonce
-                            };
+                                    to: fwdAddress,
+                                    token: glmSymbol,
+                                    amount: ethers.utils.parseEther("0.0"),
+                                    fee: bn_batch_fee,
+                                    nonce: fwd_nonce
+                                };
 		                return syncWallet.signSyncTransfer(fwd_transfer).then(function(signed_fwd_transfer){
-                            batch = [
-                                    {"tx": req[0], "signature": req[1]},
-                                    {"tx": signed_fwd_transfer.tx, "signature": signed_fwd_transfer.ethereumSignature}
-                                ];
-                            return client.request("submit_txs_batch", [batch, []]).then(function(batch_resp){   // send batch
-                                client.request("tx_info", [batch_resp[1]]).finally(function(){
-                                    sem_release();                               // release the semaphore when the transaction is added to a block
+                                    batch = [
+                                        {"tx": req[0], "signature": req[1]},
+                                        {"tx": signed_fwd_transfer.tx, "signature": signed_fwd_transfer.ethereumSignature}
+                                    ];
+                                    return client.request("submit_txs_batch", [batch, []]).then(function(batch_resp){   // send batch
+                                        ensure_tx_status(batch_resp[1], 0, sem_release);        //this function releases the semaphore in a promise
+                                        return batch_resp[0];
+                                    });
                                 });
-                                return batch_resp[0];
-                            });
-                        });
 		            }).catch(function(err){
 		                sem_release();                 // release the semaphore in case of an exception
 		                throw err;
