@@ -17,11 +17,16 @@ const zksync = require('zksync');
 const Semaphore = require('async-mutex').Semaphore;
 const JSONbig = require('json-bigint');
 
+
 var syncProvider;
 var gntTokenId;
 const ethersProvider = ethers.getDefaultProvider('https://rinkeby.infura.io/v3/f7144cb8b8dc4522afb8ad054154b083');
 const ethWallet = new ethers.Wallet(fwdPrivateKey, ethersProvider);
 var syncWallet;
+
+
+let nextID = 0;
+const createID = () => nextID++;
 
 
 // JSONRPCClient needs to know how to send a JSON-RPC request.
@@ -46,13 +51,31 @@ const client = new JSONRPCClient((jsonRPCRequest) =>
         } else if (jsonRPCRequest.id !== undefined) {
             return Promise.reject(new Error(response.statusText));
         }
-    })
+    }), createID
 );
-
 
 
 const server = new JSONRPCServer();
 const nonce_semaphore = new Semaphore(1);
+
+
+function forwardRequestAdvanced(jsonRPCRequest) {
+    reqId = createID();
+    fRequest = {
+	"jsonrpc":jsonRPCRequest.jsonrpc,
+	"method":jsonRPCRequest.method,
+	"params":jsonRPCRequest.params,
+	"id":reqId
+    };
+    return client.requestAdvanced(fRequest).then( (fResponse) => {
+	    fResponse.id = jsonRPCRequest.id;
+	    return fResponse;
+	}).catch( (error) => {
+	    console.error(error);
+	    // TODO
+        });
+}
+
 
 server.addMethod("echo", (obj) => {
     console.log("echo", obj);
@@ -63,48 +86,62 @@ server.addMethod("fwd_status", () => {
     return {"nonce_semaphore_locked": nonce_semaphore.isLocked()};
 });
 
-server.addMethod("contract_address", () => {
-	return client.request("contract_address",);
+server.addMethodAdvanced("contract_address", (jsonRPCRequest) => {
+    return forwardRequestAdvanced(jsonRPCRequest);
 });
 
-server.addMethod("tokens", () => {
-    return client.request("tokens",);
+server.addMethodAdvanced("tokens", (jsonRPCRequest) => {
+    return forwardRequestAdvanced(jsonRPCRequest);
 });
 
-server.addMethod("get_tx_fee", (req) => {
-    return client.request("get_tx_fee", req).then(function(tx_fee) {
-		token = req[2];
-		if (token != glmSymbol && token != gntTokenId) {
-			return tx_fee;
-		}
-		if (typeof req[0] == 'object') {    // change pub key
-			return tx_fee;
-		} else {
-		    if (req[0] != 'Transfer') {
-			    return tx_fee;
-		    }
-		}
-		bn_fee = ethers.BigNumber.from(tx_fee.totalFee);
-		bn_subs_fee = zksync.utils.closestPackableTransactionFee(bn_fee.mul(subsidizedFeeRate).div(100));
-		subs_fee = bn_subs_fee.toString();
-		tx_fee.totalFee = subs_fee;
-		return tx_fee;
-	});
+server.addMethodAdvanced("get_tx_fee", (jsonRPCRequest) => {
+    reqId = createID();
+    fRequest = {
+        "jsonrpc":jsonRPCRequest.jsonrpc,
+        "method":jsonRPCRequest.method,
+        "params":jsonRPCRequest.params,
+        "id":reqId
+    };
+    return client.requestAdvanced(fRequest).then( (fResponse) => {
+            fResponse.id = jsonRPCRequest.id;
+	    if (typeof fResponse.result == 'undefined') {
+		return fResponse;
+	    }
+            token = fRequest.params[2];
+            if (token != glmSymbol && token != gntTokenId) {
+                return fResponse;
+            }
+            if (typeof fRequest.params[0] == 'object') {    // change pub key
+                return fResponse;
+            } else {
+                if (fRequest.params[0] != 'Transfer') {
+                    return fResponse;
+                }
+            }
+            bn_fee = ethers.BigNumber.from(fResponse.result.totalFee);
+            bn_subs_fee = zksync.utils.closestPackableTransactionFee(bn_fee.mul(subsidizedFeeRate).div(100));
+            subs_fee = bn_subs_fee.toString();
+            fResponse.result.totalFee = subs_fee;    // only totalFee is changed when subsidizing
+            return fResponse;
+        }).catch( (error) => {
+            console.error(error);
+            // TODO
+        });
 });
 
-server.addMethod("get_txs_batch_fee_in_wei", (req) => {
-    return client.request("get_txs_batch_fee_in_wei", req);
+server.addMethodAdvanced("get_txs_batch_fee_in_wei", (jsonRPCRequest) => {
+    return forwardRequestAdvanced(jsonRPCRequest);
 });
 
-server.addMethod("account_info", (req) => {
-    return client.request("account_info", req);
+server.addMethodAdvanced("account_info", (jsonRPCRequest) => {
+    return forwardRequestAdvanced(jsonRPCRequest);
 });
 
-server.addMethod("tx_info", (req) => {
-    return client.request("tx_info", req);
+server.addMethodAdvanced("tx_info", (jsonRPCRequest) => {
+    return forwardRequestAdvanced(jsonRPCRequest);
 });
 
-function ensure_tx_status(tx_hash, depth, sem_release) {
+function ensureTxStatus(tx_hash, depth, sem_release) {
 	req = client.request("tx_info", [tx_hash]);
 	req.then(function(tx_status){
 		if (tx_status.executed) {   // if the transaction was executed, whether successfully or not
@@ -112,7 +149,7 @@ function ensure_tx_status(tx_hash, depth, sem_release) {
 		} else {
                 	if (depth < 5) {
 				console.log("must check tx status again");
-                        	ensure_tx_status(tx_hash, depth + 1, sem_release);
+                        	ensureTxStatus(tx_hash, depth + 1, sem_release);
                 	} else {
 				console.log("releasing the semaphore, too many tries");
                         	sem_release();                               // give up and release the semaphore
@@ -122,7 +159,7 @@ function ensure_tx_status(tx_hash, depth, sem_release) {
 	.catch(function(err){
 		console.log("err", err);
 		if (depth < 5) {
-			ensure_tx_status(tx_hash, depth + 1, sem_release);
+			ensureTxStatus(tx_hash, depth + 1, sem_release);
 		} else {
 			console.log("releasing the semaphore, too many errs");
 			sem_release();                               // give up and release the semaphore
@@ -130,25 +167,75 @@ function ensure_tx_status(tx_hash, depth, sem_release) {
 	});
 }
 
-server.addMethod("tx_submit", (req) => {
-	if (typeof req[0].type == 'object') {    // change pub key
-		return client.request("tx_submit", req);
-	} else {
-		if (req[0].type != 'Transfer') {
-			return client.request("tx_submit", req);
-		}
-	}
-	if (req[0].token != glmSymbol && req[0].token != gntTokenId) {
-                return client.request("tx_submit", req);
-	}
-	return client.request("get_tx_fee", ["Transfer", req[0].to, glmSymbol]).then(function(exp_client_tx_fee){
-		bn_exp_client_fee = ethers.BigNumber.from(exp_client_tx_fee.totalFee);
-		bn_subs_client_fee = zksync.utils.closestPackableTransactionFee(bn_exp_client_fee.mul(subsidizedFeeRate).div(100));
-		return client.request("get_tx_fee", ["Transfer", fwdAddress, glmSymbol]).then(function(exp_fwd_tx_fee){
+function sendSubsidizedTx(jsonRPCRequest, bn_batch_fee) {
+    return nonce_semaphore.acquire().then( function([sem_value, sem_release]) {  // acquire the semaphore
+            try {
+                return syncWallet.getNonce().then( function(fwd_nonce) {
+                        fwd_transfer = {             // sign forwarder's transaction
+                            to: fwdAddress,
+                            token: glmSymbol,
+                            amount: ethers.utils.parseEther("0.0"),
+                            fee: bn_batch_fee,
+                            nonce: fwd_nonce
+                        };
+                        return syncWallet.signSyncTransfer(fwd_transfer).then( function(signed_fwd_transfer) {
+                                batch = [
+                                    {"tx": jsonRPCRequest.params[0], "signature": jsonRPCRequest.params[1]},
+                                    {"tx": signed_fwd_transfer.tx, "signature": signed_fwd_transfer.ethereumSignature}
+                                ];
+                                return client.requestAdvanced({jsonrpc: jsonRPCRequest.jsonrpc, method: "submit_txs_batch", params: [batch, []], id: createID()}).then( function(batch_resp) {   // send batch, not signed
+					if (typeof batch_resp.result == 'undefined') {
+                                            batch_resp.id = jsonRPCRequest.id;
+                                            return batch_resp;
+                                        }
+                                        ensureTxStatus(batch_resp.result[1], 0, sem_release);        //this function releases the semaphore in a promise
+                                        return {jsonrpc: jsonRPCRequest.jsonrpc, id: jsonRPCRequest.id, result: batch_resp.result[0]};
+                                    }).catch ( (error) => {
+                                        console.error(error);
+                                        // TODO
+                                    });
+                            });
+                    }).catch( function(err) {
+                        sem_release();                 // release the semaphore in case of an exception
+                        throw err;
+                    });
+            } catch (er) {
+                sem_release();            // just in case
+                throw er;
+            }
+        });
+}
+
+server.addMethodAdvanced("tx_submit", (jsonRPCRequest) => {
+    if (typeof jsonRPCRequest.params[0].type == 'object') {    // change pub key
+        return forwardRequestAdvanced(jsonRPCRequest);
+    } else {
+        if (jsonRPCRequest.params[0].type != 'Transfer') {
+            return forwardRequestAdvanced(jsonRPCRequest);
+        }
+    }
+    if (jsonRPCRequest.params[0].token != glmSymbol && jsonRPCRequest.params[0].token != gntTokenId) {
+        return forwardRequestAdvanced(jsonRPCRequest);
+    }
+
+    return client.requestAdvanced({jsonrpc: jsonRPCRequest.jsonrpc, method: "get_tx_fee", params: ["Transfer", jsonRPCRequest.params[0].to, glmSymbol], id: createID()}).then(function(exp_client_tx_fee_resp){    // get original client's fee
+            if (typeof exp_client_tx_fee_resp.result == 'undefined') {
+                exp_client_tx_fee_resp.id = jsonRPCRequest.id;
+                return exp_client_tx_fee_resp;  // TODO maybe another error code?
+	    }
+	    exp_client_tx_fee = exp_client_tx_fee_resp.result;
+	    bn_exp_client_fee = ethers.BigNumber.from(exp_client_tx_fee.totalFee);
+	    bn_subs_client_fee = zksync.utils.closestPackableTransactionFee(bn_exp_client_fee.mul(subsidizedFeeRate).div(100));
+	    return client.requestAdvanced({jsonrpc: jsonRPCRequest.jsonrpc, method: "get_tx_fee", params: ["Transfer", fwdAddress, glmSymbol], id: createID()}).then(function(exp_fwd_tx_fee_resp){   // get original forwarder's fee
+		    if (typeof exp_fwd_tx_fee_resp.result == 'undefined') {
+                        exp_fwd_tx_fee_resp.id = jsonRPCRequest.id;
+                        return exp_fwd_tx_fee_resp;  // TODO maybe another error code?
+                    }
+                    exp_fwd_tx_fee = exp_fwd_tx_fee_resp.result;
 		    bn_exp_fwd_fee = ethers.BigNumber.from(exp_fwd_tx_fee.totalFee);
-		    bn_rcv_client_fee = ethers.BigNumber.from(req[0].fee);
+		    bn_rcv_client_fee = ethers.BigNumber.from(jsonRPCRequest.params[0].fee);
 		    if (bn_rcv_client_fee.gte(bn_exp_client_fee)) {  // if it does not need subsidizing
-                        return client.request("tx_submit", req);
+                        return forwardRequestAdvanced(jsonRPCRequest);
 		    }
 		    if (bn_rcv_client_fee.lt(bn_subs_client_fee)) {   // client's fee is too low, we pass tx anyway but subsidising is limited
 		        bn_batch_fee_unpacked = bn_exp_client_fee.add(bn_exp_fwd_fee).sub(bn_subs_client_fee);
@@ -156,37 +243,17 @@ server.addMethod("tx_submit", (req) => {
 		        bn_batch_fee_unpacked = bn_exp_client_fee.add(bn_exp_fwd_fee).sub(bn_rcv_client_fee);
 		    }
 		    bn_batch_fee = zksync.utils.closestGreaterOrEqPackableTransactionFee(bn_batch_fee_unpacked);
-		    return nonce_semaphore.acquire().then(function([sem_value, sem_release]) {  // acquire the semaphore
-		        try {
-		            return syncWallet.getNonce().then(function(fwd_nonce){
-		                fwd_transfer = {             // sign forwarder's transaction
-                                    to: fwdAddress,
-                                    token: glmSymbol,
-                                    amount: ethers.utils.parseEther("0.0"),
-                                    fee: bn_batch_fee,
-                                    nonce: fwd_nonce
-                                };
-		                return syncWallet.signSyncTransfer(fwd_transfer).then(function(signed_fwd_transfer){
-                                    batch = [
-                                        {"tx": req[0], "signature": req[1]},
-                                        {"tx": signed_fwd_transfer.tx, "signature": signed_fwd_transfer.ethereumSignature}
-                                    ];
-                                    return client.request("submit_txs_batch", [batch, []]).then(function(batch_resp){   // send batch
-                                        ensure_tx_status(batch_resp[1], 0, sem_release);        //this function releases the semaphore in a promise
-                                        return batch_resp[0];
-                                    });
-                                });
-		            }).catch(function(err){
-		                sem_release();                 // release the semaphore in case of an exception
-		                throw err;
-		            });
-		        } catch (er) {
-		            sem_release();            // just in case
-		            throw er;
-		        }
-		    });
+
+		    return sendSubsidizedTx(jsonRPCRequest, bn_batch_fee);
+
+		}).catch( (error) => {
+                    console.error(error);
+                    // TODO
 		});
-	});
+        }).catch( (error) => {
+            console.error(error);
+	    // TODO
+        });
 });
 
 
@@ -218,5 +285,7 @@ zksync.getDefaultProvider(zksyncAddress).then(function(sProvider) {
         console.log("Starting ...");
         app.listen(serverPort);
     });
+}).catch(function(error) {
+    console.error('error when starting, exiting ...', error);
 });
 
