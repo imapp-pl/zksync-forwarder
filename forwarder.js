@@ -142,29 +142,25 @@ server.addMethodAdvanced("tx_info", (jsonRPCRequest) => {
 });
 
 function ensureTxStatus(tx_hash, depth, sem_release) {
-	req = client.request("tx_info", [tx_hash]);
-	req.then(function(tx_status){
-		if (tx_status.executed) {   // if the transaction was executed, whether successfully or not
-			sem_release();                               // release the semaphore when the transaction is added to a block or not
-		} else {
-                	if (depth < 5) {
-				console.log("must check tx status again");
-                        	ensureTxStatus(tx_hash, depth + 1, sem_release);
-                	} else {
-				console.log("releasing the semaphore, too many tries");
-                        	sem_release();                               // give up and release the semaphore
-                	}
-		}
-	})
-	.catch(function(err){
-		console.log("err", err);
-		if (depth < 5) {
-			ensureTxStatus(tx_hash, depth + 1, sem_release);
-		} else {
-			console.log("releasing the semaphore, too many errs");
-			sem_release();                               // give up and release the semaphore
-		}
-	});
+    if (depth == 5) {
+        console.log("releasing the semaphore, too many tries");
+        sem_release();                               // give up and release the semaphore
+        return;
+    }
+    if (depth > 0) {
+        console.log("must check tx status again");
+    }
+    req = client.request("tx_info", [tx_hash]);
+    req.then( function(tx_status) {
+            if (tx_status.executed) {   // if the transaction was executed, whether successfully or not
+                sem_release();                               // release the semaphore when the transaction is added to a block or not
+            } else {
+                ensureTxStatus(tx_hash, depth + 1, sem_release);
+            }
+        }).catch( function(err) {
+            console.log("err", err);
+            ensureTxStatus(tx_hash, depth + 1, sem_release);
+        });
 }
 
 function sendSubsidizedTx(jsonRPCRequest, bn_batch_fee) {
