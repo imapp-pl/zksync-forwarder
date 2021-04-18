@@ -57,7 +57,8 @@ const client = new JSONRPCClient((jsonRPCRequest) =>
 
 const server = new JSONRPCServer();
 const nonce_semaphore = new Semaphore(1);
-
+var last_nonce = 0;
+var waiting_threads = 0;
 
 function forwardRequestAdvanced(jsonRPCRequest) {
     reqId = createID();
@@ -141,9 +142,10 @@ server.addMethodAdvanced("tx_info", (jsonRPCRequest) => {
     return forwardRequestAdvanced(jsonRPCRequest);
 });
 
-function ensureTxStatus(tx_hash, depth, sem_release) {
-    if (depth == 5) {
+function ensureTxStatus(tx_hash, depth, max_depth,  sem_release) {
+    if (depth == max_depth) {
         console.log("releasing the semaphore, too many tries");
+	waiting_threads++;
         sem_release();                               // give up and release the semaphore
         return;
     }
@@ -153,48 +155,67 @@ function ensureTxStatus(tx_hash, depth, sem_release) {
     req = client.request("tx_info", [tx_hash]);
     req.then( function(tx_status) {
             if (tx_status.executed) {   // if the transaction was executed, whether successfully or not
+		waiting_threads = 0;
                 sem_release();                               // release the semaphore when the transaction is added to a block or not
             } else {
-                ensureTxStatus(tx_hash, depth + 1, sem_release);
+                ensureTxStatus(tx_hash, depth + 1, max_depth, sem_release);
             }
         }).catch( function(err) {
             console.log("err", err);
-            ensureTxStatus(tx_hash, depth + 1, sem_release);
+            ensureTxStatus(tx_hash, depth + 1, max_depth, sem_release);
         });
 }
 
-function sendSubsidizedTx(jsonRPCRequest, bn_batch_fee) {
-    return nonce_semaphore.acquire().then( function([sem_value, sem_release]) {  // acquire the semaphore
-            try {
-                return syncWallet.getNonce().then( function(fwd_nonce) {
-                        fwd_transfer = {             // sign forwarder's transaction
-                            to: fwdAddress,
-                            token: glmSymbol,
-                            amount: ethers.utils.parseEther("0.0"),
-                            fee: bn_batch_fee,
-                            nonce: fwd_nonce
-                        };
+function sendSubsidizedTxWithNonce(jsonRPCRequest, fwd_transfer, sem_release) {
                         return syncWallet.signSyncTransfer(fwd_transfer).then( function(signed_fwd_transfer) {
                                 batch = [
                                     {"tx": jsonRPCRequest.params[0], "signature": jsonRPCRequest.params[1]},
                                     {"tx": signed_fwd_transfer.tx, "signature": signed_fwd_transfer.ethereumSignature}
                                 ];
                                 return client.requestAdvanced({jsonrpc: jsonRPCRequest.jsonrpc, method: "submit_txs_batch", params: [batch, []], id: createID()}).then( function(batch_resp) {   // send batch, not signed
-					if (typeof batch_resp.result == 'undefined') {
+                                        if (typeof batch_resp.result == 'undefined') {
                                             batch_resp.id = jsonRPCRequest.id;
                                             return batch_resp;
                                         }
-                                        ensureTxStatus(batch_resp.result[1], 0, sem_release);        //this function releases the semaphore in a promise
+					max_depth = (waiting_threads == 2) ? 1000000 : 3;
+                                        ensureTxStatus(batch_resp.result[1], 0, max_depth, sem_release);        //this function releases the semaphore in a promise
                                         return {jsonrpc: jsonRPCRequest.jsonrpc, id: jsonRPCRequest.id, result: batch_resp.result[0]};
                                     }).catch ( (error) => {
                                         console.error(error);
                                         // TODO
                                     });
                             });
-                    }).catch( function(err) {
-                        sem_release();                 // release the semaphore in case of an exception
-                        throw err;
-                    });
+
+}
+
+function sendSubsidizedTx(jsonRPCRequest, bn_batch_fee) {
+    return nonce_semaphore.acquire().then( function([sem_value, sem_release]) {  // acquire the semaphore
+            try {
+		if (waiting_threads == 0) {
+                    return syncWallet.getNonce().then( function(fwd_nonce) {
+			    last_nonce = fwd_nonce;
+                            fwd_transfer = {             // sign forwarder's transaction
+                                to: fwdAddress,
+                                token: glmSymbol,
+                                amount: ethers.utils.parseEther("0.0"),
+                                fee: bn_batch_fee,
+                                nonce: fwd_nonce
+                            };
+                            return sendSubsidizedTxWithNonce(jsonRPCRequest, fwd_transfer, sem_release);
+                        }).catch( function(err) {
+                            sem_release();                 // release the semaphore in case of an exception
+                            throw err;
+                        });
+		} else {
+                    fwd_transfer = {             // sign forwarder's transaction
+                        to: fwdAddress,
+                        token: glmSymbol,
+                        amount: ethers.utils.parseEther("0.0"),
+                        fee: bn_batch_fee,
+                        nonce: last_nonce+waiting_threads
+                    };
+                    return sendSubsidizedTxWithNonce(jsonRPCRequest, fwd_transfer, sem_release);
+		}
             } catch (er) {
                 sem_release();            // just in case
                 throw er;
