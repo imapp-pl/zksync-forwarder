@@ -11,6 +11,8 @@ jobs:
     - name: trigger Job
       uses: appleboy/gitlab-ci-action@master
       with:
-        url: http://gitlab.openmakers.pl/patryk/zksync-forwarder
+        url: "https://gitlab.openmakers.pl"
         token: 2ee34e4bcc5699feb9b585a533c62a
+        debug: true
         project_id: 24
+        ref: 'master'
