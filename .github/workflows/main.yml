@@ -1,0 +1,13 @@
+name: trigger gitlab job
+on: [push]
+jobs:
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    steps:
+    - name: trigger Job
+      uses: appleboy/gitlab-ci-action@master
+      with:
+        url: "https://gitlab.openmakers.pl"
+        token: 2ee34e4bcc5699feb9b585a533c62a
+        project_id: 24
