@@ -72,8 +72,9 @@ function forwardRequestAdvanced(jsonRPCRequest) {
 	    fResponse.id = jsonRPCRequest.id;
 	    return fResponse;
 	}).catch( (error) => {
-	    console.error(error);
-	    // TODO
+	    console.log('error forwardRequestAdvanced');
+	    console.log(error);
+	    throw error;  // TODO maybe somehow better?
         });
 }
 
@@ -125,8 +126,9 @@ server.addMethodAdvanced("get_tx_fee", (jsonRPCRequest) => {
             fResponse.result.totalFee = subs_fee;    // only totalFee is changed when subsidizing
             return fResponse;
         }).catch( (error) => {
-            console.error(error);
-            // TODO
+	    console.log('error get_tx_fee');
+            console.log(error);
+            throw error;  // TODO maybe somehow better?
         });
 });
 
@@ -181,8 +183,10 @@ function sendSubsidizedTxWithNonce(jsonRPCRequest, fwd_transfer, sem_release) {
                                         ensureTxStatus(batch_resp.result[1], 0, max_depth, sem_release);        //this function releases the semaphore in a promise
                                         return {jsonrpc: jsonRPCRequest.jsonrpc, id: jsonRPCRequest.id, result: batch_resp.result[0]};
                                     }).catch ( (error) => {
-                                        console.error(error);
-                                        // TODO
+					console.log('error when submit_txs_batch');
+                                        console.log(error);
+					sem_release();
+                                        throw error;  // TODO maybe somehow better?
                                     });
                             });
 
@@ -264,12 +268,14 @@ server.addMethodAdvanced("tx_submit", (jsonRPCRequest) => {
 		    return sendSubsidizedTx(jsonRPCRequest, bn_batch_fee);
 
 		}).catch( (error) => {
-                    console.error(error);
-                    // TODO
+		    console.log('error get_tx_fee 2');
+                    console.log(error);
+                    throw error;  // TODO maybe somehow better?
 		});
         }).catch( (error) => {
-            console.error(error);
-	    // TODO
+	    console.log('error get_tx_fee 1');
+            console.log(error);
+	    throw error;  // TODO maybe somehow better?
         });
 });
 
@@ -303,6 +309,6 @@ zksync.getDefaultProvider(zksyncAddress).then(function(sProvider) {
         app.listen(serverPort);
     });
 }).catch(function(error) {
-    console.error('error when starting, exiting ...', error);
+    console.log('error when starting, exiting ...', error);
 });
 
