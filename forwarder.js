@@ -49,7 +49,7 @@ const client = new JSONRPCClient((jsonRPCRequest) =>
                     client.receive(jsonRPCResponse);
                 });
         } else if (jsonRPCRequest.id !== undefined) {
-            return Promise.reject(new Error(response.statusText));
+            return Promise.reject(new Error('forwarder http error: status: '+response.status+' statusMessage: '+response.statusText));
         }
     }), createID
 );
