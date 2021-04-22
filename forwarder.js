@@ -20,7 +20,7 @@ const JSONbig = require('json-bigint');
 
 var syncProvider;
 var gntTokenId;
-const ethersProvider = ethers.getDefaultProvider('https://rinkeby.infura.io/v3/f7144cb8b8dc4522afb8ad054154b083');
+const ethersProvider = ethers.getDefaultProvider(zksyncAddress);
 const ethWallet = new ethers.Wallet(fwdPrivateKey, ethersProvider);
 var syncWallet;
 
@@ -305,10 +305,10 @@ zksync.getDefaultProvider(zksyncAddress).then(function(sProvider) {
     gntTokenId = syncProvider.tokenSet.resolveTokenId(glmSymbol);
     zksync.Wallet.fromEthSigner(ethWallet, syncProvider).then(function(sWallet){
         syncWallet = sWallet;
-        console.log("Starting ...");
+        console.log("Starting (", zksyncAddress, ") ...");
         app.listen(serverPort);
     });
 }).catch(function(error) {
-    console.log('error when starting, exiting ...', error);
+    console.log('error during the start, exiting ...', error);
 });
 
