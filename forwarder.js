@@ -318,7 +318,7 @@ zksync.getDefaultProvider(zksyncAddress).then(function(sProvider) {
     gntTokenId = syncProvider.tokenSet.resolveTokenId(glmSymbol);
     zksync.Wallet.fromEthSigner(ethWallet, syncProvider).then(function(sWallet){
         syncWallet = sWallet;
-        console.log("Starting (", zksyncAddress, ") ...");
+        console.log("Starting (", zksyncAddress, ", ", fwdAddress, ") ...");
         app.listen(serverPort);
     });
 }).catch(function(error) {
