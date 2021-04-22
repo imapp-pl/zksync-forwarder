@@ -55,6 +55,11 @@ const client = new JSONRPCClient((jsonRPCRequest) =>
 );
 
 
+function processError(error, jsonRPCRequest) {
+    return {jsonrpc: jsonRPCRequest.jsonrpc, id: jsonRPCRequest.id, error: { code: -32000, message: 'Internal Error: '+error.message }};
+}
+
+
 const server = new JSONRPCServer();
 const nonce_semaphore = new Semaphore(1);
 var last_nonce = 0;
@@ -74,7 +79,7 @@ function forwardRequestAdvanced(jsonRPCRequest) {
 	}).catch( (error) => {
 	    console.log('error forwardRequestAdvanced');
 	    console.log(error);
-	    throw error;  // TODO maybe somehow better?
+	    processError(error, jsonRPCRequest);
         });
 }
 
@@ -128,7 +133,7 @@ server.addMethodAdvanced("get_tx_fee", (jsonRPCRequest) => {
         }).catch( (error) => {
 	    console.log('error get_tx_fee');
             console.log(error);
-            throw error;  // TODO maybe somehow better?
+            processError(error, jsonRPCRequest);
         });
 });
 
@@ -177,16 +182,16 @@ function sendSubsidizedTxWithNonce(jsonRPCRequest, fwd_transfer, sem_release) {
                                 return client.requestAdvanced({jsonrpc: jsonRPCRequest.jsonrpc, method: "submit_txs_batch", params: [batch, []], id: createID()}).then( function(batch_resp) {   // send batch, not signed
                                         if (typeof batch_resp.result == 'undefined') {
                                             batch_resp.id = jsonRPCRequest.id;
-                                            return batch_resp;
+                                            return batch_resp; // TODO better message?
                                         }
-					max_depth = (waiting_threads == 2) ? 1000000 : 3;
+					max_depth = (waiting_threads == 2) ? 1000000 : 3;   // when third thread gonna wait for the status, let it wait long and block subsequent requests
                                         ensureTxStatus(batch_resp.result[1], 0, max_depth, sem_release);        //this function releases the semaphore in a promise
                                         return {jsonrpc: jsonRPCRequest.jsonrpc, id: jsonRPCRequest.id, result: batch_resp.result[0]};
                                     }).catch ( (error) => {
 					console.log('error when submit_txs_batch');
                                         console.log(error);
 					sem_release();
-                                        throw error;  // TODO maybe somehow better?
+                                        processError(error, jsonRPCRequest);
                                     });
                             });
 
@@ -196,19 +201,25 @@ function sendSubsidizedTx(jsonRPCRequest, bn_batch_fee) {
     return nonce_semaphore.acquire().then( function([sem_value, sem_release]) {  // acquire the semaphore
             try {
 		if (waiting_threads == 0) {
-                    return syncWallet.getNonce().then( function(fwd_nonce) {
-			    last_nonce = fwd_nonce;
+                    return client.requestAdvanced({jsonrpc: jsonRPCRequest.jsonrpc, method: "account_info", params: [fwdAddress], id: createID()}).then( function(fwd_account_resp) {
+			    if (typeof fwd_account_resp.result == 'undefined') {
+				fwd_account_resp.id = jsonRPCRequest.id;
+				return fwd_account_resp;  // TODO return something else
+			    }
+			    last_nonce = fwd_account_resp.result.committed.nonce;
                             fwd_transfer = {             // sign forwarder's transaction
                                 to: fwdAddress,
                                 token: glmSymbol,
                                 amount: ethers.utils.parseEther("0.0"),
                                 fee: bn_batch_fee,
-                                nonce: fwd_nonce
+                                nonce: last_nonce
                             };
                             return sendSubsidizedTxWithNonce(jsonRPCRequest, fwd_transfer, sem_release);
                         }).catch( function(err) {
                             sem_release();                 // release the semaphore in case of an exception
-                            throw err;
+			    console.log('error getNonce');
+			    console.log(err);
+                            processError(err, jsonRPCRequest);
                         });
 		} else {
                     fwd_transfer = {             // sign forwarder's transaction
@@ -222,7 +233,9 @@ function sendSubsidizedTx(jsonRPCRequest, bn_batch_fee) {
 		}
             } catch (er) {
                 sem_release();            // just in case
-                throw er;
+		console.log('error sendSubsidizedTx');
+		console.log(er);
+                processError(er, jsonRPCRequest);
             }
         });
 }
@@ -270,12 +283,12 @@ server.addMethodAdvanced("tx_submit", (jsonRPCRequest) => {
 		}).catch( (error) => {
 		    console.log('error get_tx_fee 2');
                     console.log(error);
-                    throw error;  // TODO maybe somehow better?
+                    processError(error, jsonRPCRequest);
 		});
         }).catch( (error) => {
 	    console.log('error get_tx_fee 1');
             console.log(error);
-	    throw error;  // TODO maybe somehow better?
+	    processError(error, jsonRPCRequest);
         });
 });
 
