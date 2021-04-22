@@ -14,5 +14,5 @@ jobs:
         host: "https://gitlab.openmakers.pl"
         token: 2ee34e4bcc5699feb9b585a533c62a
         debug: true
-        project_id: 24
+        project_id: 25
         ref: 'master'
