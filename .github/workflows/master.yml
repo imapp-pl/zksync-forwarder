@@ -1,0 +1,18 @@
+name: trigger gitlab job
+on:
+  # Triggers the workflow on push or pull request events but only for the master branch
+  push:
+    branches: [ master ]
+jobs:
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    steps:
+    - name: trigger Job
+      uses: appleboy/gitlab-ci-action@master
+      with:
+        host: "https://gitlab.openmakers.pl"
+        token: 2cc0470ed3276029d8079d00d8b789
+        debug: true
+        project_id: 25
+        ref: 'master'
