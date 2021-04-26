@@ -1,0 +1,3 @@
+FROM nginx:latest
+COPY ./nginx.template /etc/nginx/conf.d/nginx.template
+
