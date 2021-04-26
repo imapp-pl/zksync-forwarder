@@ -4,10 +4,14 @@ services:
   nginx:
     image: nginx:latest
     container_name: nginx
+    volumes:
+      - ./nginx.template:/etc/nginx/conf.d/nginx.template
     ports:
       - "80:80"
-    volumes:
-      - ./nginx.conf:/etc/nginx/conf.d/default.conf
+    environment:
+      - ZKSYNC_API_URL=rinkeby-api.zksync.io
+    command: /bin/bash -c "envsubst < /etc/nginx/conf.d/nginx.template > /etc/nginx/conf.d/default.conf && nginx -g 'daemon off;'" 
+
   zksync-forwarder:
     build:
       context: .

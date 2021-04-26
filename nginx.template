@@ -7,7 +7,7 @@ server {
    }
    location /api/v0.1/ {
        proxy_ssl_session_reuse off;
-       proxy_pass https://rinkeby-api.zksync.io/api/v0.1/;
+       proxy_pass https://${ZKSYNC_API_URL}/api/v0.1/;
        proxy_ssl_server_name on;
    }
 }
