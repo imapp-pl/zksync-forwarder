@@ -79,7 +79,7 @@ function forwardRequestAdvanced(jsonRPCRequest) {
 	}).catch( (error) => {
 	    console.log('error forwardRequestAdvanced');
 	    console.log(error);
-	    processError(error, jsonRPCRequest);
+	    return processError(error, jsonRPCRequest);
         });
 }
 
@@ -133,7 +133,7 @@ server.addMethodAdvanced("get_tx_fee", (jsonRPCRequest) => {
         }).catch( (error) => {
 	    console.log('error get_tx_fee');
             console.log(error);
-            processError(error, jsonRPCRequest);
+            return processError(error, jsonRPCRequest);
         });
 });
 
@@ -182,6 +182,7 @@ function sendSubsidizedTxWithNonce(jsonRPCRequest, fwd_transfer, sem_release) {
                                 return client.requestAdvanced({jsonrpc: jsonRPCRequest.jsonrpc, method: "submit_txs_batch", params: [batch, []], id: createID()}).then( function(batch_resp) {   // send batch, not signed
                                         if (typeof batch_resp.result == 'undefined') {
                                             batch_resp.id = jsonRPCRequest.id;
+					    sem_release();
                                             return batch_resp; // TODO better message?
                                         }
 					max_depth = (waiting_threads == 2) ? 1000000 : 3;   // when third thread gonna wait for the status, let it wait long and block subsequent requests
@@ -191,7 +192,7 @@ function sendSubsidizedTxWithNonce(jsonRPCRequest, fwd_transfer, sem_release) {
 					console.log('error when submit_txs_batch');
                                         console.log(error);
 					sem_release();
-                                        processError(error, jsonRPCRequest);
+                                        return processError(error, jsonRPCRequest);
                                     });
                             });
 
@@ -219,7 +220,7 @@ function sendSubsidizedTx(jsonRPCRequest, bn_batch_fee) {
                             sem_release();                 // release the semaphore in case of an exception
 			    console.log('error getNonce');
 			    console.log(err);
-                            processError(err, jsonRPCRequest);
+                            return processError(err, jsonRPCRequest);
                         });
 		} else {
                     fwd_transfer = {             // sign forwarder's transaction
@@ -235,7 +236,7 @@ function sendSubsidizedTx(jsonRPCRequest, bn_batch_fee) {
                 sem_release();            // just in case
 		console.log('error sendSubsidizedTx');
 		console.log(er);
-                processError(er, jsonRPCRequest);
+                return processError(er, jsonRPCRequest);
             }
         });
 }
@@ -283,12 +284,12 @@ server.addMethodAdvanced("tx_submit", (jsonRPCRequest) => {
 		}).catch( (error) => {
 		    console.log('error get_tx_fee 2');
                     console.log(error);
-                    processError(error, jsonRPCRequest);
+                    return processError(error, jsonRPCRequest);
 		});
         }).catch( (error) => {
 	    console.log('error get_tx_fee 1');
             console.log(error);
-	    processError(error, jsonRPCRequest);
+	    return processError(error, jsonRPCRequest);
         });
 });
 
