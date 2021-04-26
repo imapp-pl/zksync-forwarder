@@ -7,7 +7,8 @@ services:
       dockerfile: Dockerfile
     ports:
       - "3030:3030"
-      - "8080:8080"
-    command: bash -c "service apache2 start; node forwarder.js"
+    command:
+      - node
+      - forwarder.js
     env_file: .env
 
