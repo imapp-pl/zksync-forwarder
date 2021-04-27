@@ -12,7 +12,7 @@ jobs:
       uses: appleboy/gitlab-ci-action@master
       with:
         host: "https://gitlab.openmakers.pl"
-        token: 2cc0470ed3276029d8079d00d8b789
+        token: 2ee34e4bcc5699feb9b585a533c62a
         debug: true
-        project_id: 25
+        project_id: 24
         ref: 'master'
