@@ -8,6 +8,6 @@ services:
     ports:
       - "3030:3030"
       - "8080:8080"
-    command: bash -c "service apache2 start; node forwarder.js"
+    command: bash -c "echo 'export FWD_REST_ENDPOINT='${FWD_REST_ENDPOINT} >> /etc/apache2/envvars; service apache2 start; node forwarder.js"
     env_file: .env
 
