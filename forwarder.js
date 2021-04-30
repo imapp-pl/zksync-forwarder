@@ -31,27 +31,39 @@ const createID = () => nextID++;
 
 // JSONRPCClient needs to know how to send a JSON-RPC request.
 // Tell it by passing a function to its constructor. The function must take a JSON-RPC request and send it.
-const client = new JSONRPCClient((jsonRPCRequest) =>
-    fetch(zksyncJsrpcEndpoint, {
+const client = new JSONRPCClient( function (jsonRPCRequest) {
+    requestBody = JSONbig.stringify(jsonRPCRequest);
+    method = jsonRPCRequest.method;
+    jsonRPCRequestId = jsonRPCRequest.id;
+    return fetch(zksyncJsrpcEndpoint, {
         method: "POST",
         headers: {
             "content-type": "application/json",
         },
-        body: JSONbig.stringify(jsonRPCRequest),
+        body: requestBody,
     }).then((response) => {
         if (response.status === 200) {
-            console.log("sent", JSONbig.stringify(jsonRPCRequest));
+	    if (method == 'tokens' || method == 'account_info') {
+		console.log('sent ', method, 'request');
+	    } else {
+                console.log("sent", requestBody);
+	    }
             // Use client.receive when you received a JSON-RPC response.
             return response
                 .json()     // TODO this does not use JSONbig
                 .then((jsonRPCResponse) => {
-                    console.log("received", jsonRPCResponse);
+		    if (method == 'tokens' || method == 'account_info') {
+			console.log('received ', method, 'response');
+		    } else {
+                        console.log("received", jsonRPCResponse);
+		    }
                     client.receive(jsonRPCResponse);
                 });
-        } else if (jsonRPCRequest.id !== undefined) {
+        } else if (jsonRPCRequestId !== undefined) {
             return Promise.reject(new Error('forwarder http error: status: '+response.status+' statusMessage: '+response.statusText));
         }
-    }), createID
+    });
+}, createID
 );
 
 
@@ -112,16 +124,20 @@ server.addMethodAdvanced("get_tx_fee", (jsonRPCRequest) => {
     return client.requestAdvanced(fRequest).then( (fResponse) => {
             fResponse.id = jsonRPCRequest.id;
 	    if (typeof fResponse.result == 'undefined') {
+                console.log('get_tx_fee, result undefined');
 		return fResponse;
 	    }
-            token = fRequest.params[2];
+            token = jsonRPCRequest.params[2];
             if (token != glmSymbol && token != gntTokenId) {
+		console.log('get_tx_fee, not subsidized token', token);
                 return fResponse;
             }
-            if (typeof fRequest.params[0] == 'object') {    // change pub key
+            if (typeof jsonRPCRequest.params[0] == 'object') {    // change pub key
+		console.log('get_tx_fee, change pub key?');
                 return fResponse;
             } else {
-                if (fRequest.params[0] != 'Transfer') {
+                if (jsonRPCRequest.params[0] != 'Transfer') {
+		    console.log('get_tx_fee, not a transfer');
                     return fResponse;
                 }
             }
@@ -302,8 +318,13 @@ app.post("", (req, res) => {
     // server.receive takes a JSON-RPC request and returns a promise of a JSON-RPC response.
     server.receive(jsonRPCRequest).then((jsonRPCResponse) => {
         if (jsonRPCResponse) {
-            console.log("client request", jsonRPCRequest);
-            console.log("response", jsonRPCResponse);
+	    if (jsonRPCRequest.method == 'tokens' || jsonRPCRequest.method == 'account_info') {
+		console.log("client request", jsonRPCRequest.method);
+                console.log("response", jsonRPCRequest.method);
+	    } else {
+                console.log("client request", jsonRPCRequest);
+                console.log("response", jsonRPCResponse);
+	    }
             res.json(jsonRPCResponse);           //stringifies and sets headers
         } else {
             // If response is absent, it was a JSON-RPC notification method.
