@@ -11,6 +11,8 @@ const express = require("express");
 const bodyParser = require("body-parser");
 const { JSONRPCServer } = require("json-rpc-2.0");
 const { JSONRPCClient } = require("json-rpc-2.0");
+const { createJSONRPCErrorResponse } = require("json-rpc-2.0");
+const { JSONRPC } = require("json-rpc-2.0");
 const fetch = require('node-fetch');
 const ethers = require('ethers');
 const zksync = require('zksync');
@@ -43,24 +45,39 @@ const client = new JSONRPCClient( function (jsonRPCRequest) {
         body: requestBody,
     }).then((response) => {
         if (response.status === 200) {
-	    if (method == 'tokens' || method == 'account_info') {
-		console.log('sent ', method, 'request');
-	    } else {
+	        if (method == 'tokens' || method == 'account_info') {
+		        console.log('sent ', method, 'request');
+	        } else {
                 console.log("sent", requestBody);
-	    }
+	        }
             // Use client.receive when you received a JSON-RPC response.
             return response
                 .json()     // TODO this does not use JSONbig
                 .then((jsonRPCResponse) => {
-		    if (method == 'tokens' || method == 'account_info') {
-			console.log('received ', method, 'response');
-		    } else {
+		            if (method == 'tokens' || method == 'account_info') {
+			            console.log('received ', method, 'response');
+		            } else {
                         console.log("received", jsonRPCResponse);
-		    }
+		            }
                     client.receive(jsonRPCResponse);
                 });
         } else if (jsonRPCRequestId !== undefined) {
-            return Promise.reject(new Error('forwarder http error: status: '+response.status+' statusMessage: '+response.statusText));
+            return Promise.resolve(client.receive(
+//                createJSONRPCErrorResponse(
+//                    jsonRPCRequestId, -32603, 'forwarder http error: status: '+response.status+' statusMessage: '+response.statusText)
+                    {
+                        jsonrpc: JSONRPC,
+                        id: jsonRPCRequestId,
+                        error: {
+                            code: -32603,
+                            message: 'forwarder http error: status: '+response.status+', statusMessage: '+response.statusText,
+                            httpCode: response.status
+                        }
+                    }
+                )
+            );
+        } else {
+            return Promise.reject(new Error('forwarder error: jsonRPCRequestId not found'));
         }
     });
 }, createID
@@ -101,8 +118,9 @@ server.addMethod("echo", (obj) => {
     return obj;
 });
 
+var startedDate = new Date();
 server.addMethod("fwd_status", () => {
-    return {"nonce_semaphore_locked": nonce_semaphore.isLocked()};
+    return {"nonce_semaphore_locked": nonce_semaphore.isLocked(), "network": zksyncAddress, "forwarder's eth account": fwdAddress, "started": startedDate};
 });
 
 server.addMethodAdvanced("contract_address", (jsonRPCRequest) => {
@@ -318,19 +336,30 @@ app.post("", (req, res) => {
     // server.receive takes a JSON-RPC request and returns a promise of a JSON-RPC response.
     server.receive(jsonRPCRequest).then((jsonRPCResponse) => {
         if (jsonRPCResponse) {
-	    if (jsonRPCRequest.method == 'tokens' || jsonRPCRequest.method == 'account_info') {
-		console.log("client request", jsonRPCRequest.method);
+            if (jsonRPCResponse.error && jsonRPCResponse.error.httpCode) {
+                console.log("client request", jsonRPCRequest);
+                console.log("response", "http status:", jsonRPCResponse.error.httpCode, "message:", jsonRPCResponse.error.message);
+                let httpCode = jsonRPCResponse.error.httpCode == 520 ? 504 : jsonRPCResponse.error.httpCode;
+                res.status(httpCode).send(jsonRPCResponse.error.message);
+            } else {
+	        if (jsonRPCRequest.method == 'tokens' || jsonRPCRequest.method == 'account_info') {
+		        console.log("client request", jsonRPCRequest.method);
                 console.log("response", jsonRPCRequest.method);
-	    } else {
+	        } else {
                 console.log("client request", jsonRPCRequest);
                 console.log("response", jsonRPCResponse);
-	    }
+	        }
             res.json(jsonRPCResponse);           //stringifies and sets headers
+            }
         } else {
             // If response is absent, it was a JSON-RPC notification method.
             // Respond with no content status (204).
             res.sendStatus(204);
         }
+    }).catch( (error) => {
+        console.log("client request", jsonRPCRequest);
+        console.log("response", error);
+        res.status(500).send(error.message);
     });
 });
 
