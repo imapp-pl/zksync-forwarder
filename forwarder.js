@@ -140,35 +140,35 @@ server.addMethodAdvanced("get_tx_fee", (jsonRPCRequest) => {
         "id":reqId
     };
     return client.requestAdvanced(fRequest).then( (fResponse) => {
-            fResponse.id = jsonRPCRequest.id;
+        fResponse.id = jsonRPCRequest.id;
 	    if (typeof fResponse.result == 'undefined') {
-                console.log('get_tx_fee, result undefined');
-		return fResponse;
+            console.log('get_tx_fee, result undefined');
+		    return fResponse;
 	    }
-            token = jsonRPCRequest.params[2];
-            if (token != glmSymbol && token != gntTokenId) {
-		console.log('get_tx_fee, not subsidized token', token);
-                return fResponse;
-            }
-            if (typeof jsonRPCRequest.params[0] == 'object') {    // change pub key
-		console.log('get_tx_fee, change pub key?');
-                return fResponse;
-            } else {
-                if (jsonRPCRequest.params[0] != 'Transfer') {
-		    console.log('get_tx_fee, not a transfer');
-                    return fResponse;
-                }
-            }
-            bn_fee = ethers.BigNumber.from(fResponse.result.totalFee);
-            bn_subs_fee = zksync.utils.closestPackableTransactionFee(bn_fee.mul(subsidizedFeeRate).div(100));
-            subs_fee = bn_subs_fee.toString();
-            fResponse.result.totalFee = subs_fee;    // only totalFee is changed when subsidizing
+        token = jsonRPCRequest.params[2];
+        if (token != glmSymbol && token != gntTokenId) {
+		    console.log('get_tx_fee, not subsidized token', token);
             return fResponse;
-        }).catch( (error) => {
+        }
+        if (typeof jsonRPCRequest.params[0] == 'object') {    // change pub key
+		    console.log('get_tx_fee, change pub key?');
+            return fResponse;
+        } else {
+            if (jsonRPCRequest.params[0] != 'Transfer') {
+		        console.log('get_tx_fee, not a transfer');
+                return fResponse;
+            }
+        }
+        bn_fee = ethers.BigNumber.from(fResponse.result.totalFee);
+        bn_subs_fee = zksync.utils.closestPackableTransactionFee(bn_fee.mul(subsidizedFeeRate).div(100));
+        subs_fee = bn_subs_fee.toString();
+        fResponse.result.totalFee = subs_fee;    // only totalFee is changed when subsidizing
+        return fResponse;
+    }).catch( (error) => {
 	    console.log('error get_tx_fee');
-            console.log(error);
-            return processError(error, jsonRPCRequest);
-        });
+        console.log(error);
+        return processError(error, jsonRPCRequest);
+    });
 });
 
 server.addMethodAdvanced("get_txs_batch_fee_in_wei", (jsonRPCRequest) => {
