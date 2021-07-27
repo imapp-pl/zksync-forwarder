@@ -186,8 +186,9 @@ server.addMethodAdvanced("tx_info", (jsonRPCRequest) => {
 function ensureTxStatus(tx_hash, depth, max_depth,  sem_release) {
     if (depth == max_depth) {
         console.log("releasing the semaphore, too many tries");
-	waiting_threads++;
+	    waiting_threads++;
         sem_release();                               // give up and release the semaphore
+        process_client_req();
         return;
     }
     if (depth > 0) {
@@ -195,84 +196,171 @@ function ensureTxStatus(tx_hash, depth, max_depth,  sem_release) {
     }
     req = client.request("tx_info", [tx_hash]);
     req.then( function(tx_status) {
-            if (tx_status.executed) {   // if the transaction was executed, whether successfully or not
-		waiting_threads = 0;
-                sem_release();                               // release the semaphore when the transaction is added to a block or not
-            } else {
-                ensureTxStatus(tx_hash, depth + 1, max_depth, sem_release);
-            }
-        }).catch( function(err) {
-            console.log("err", err);
+        if (tx_status.executed) {   // if the transaction was executed, whether successfully or not
+            waiting_threads = 0;
+            sem_release();                               // release the semaphore when the transaction is added to a block or not
+            process_client_req();
+        } else {
             ensureTxStatus(tx_hash, depth + 1, max_depth, sem_release);
+        }
+    }).catch( function(err) {
+        console.log("err", err);
+        ensureTxStatus(tx_hash, depth + 1, max_depth, sem_release);
+    });
+}
+
+function sendSubsidizedTxWithNonce(jsonRPCRequests, fwd_transfer, sem_release, resolve_funcs) {
+    // returning is not necessary, it is deprecated code
+    return syncWallet.signSyncTransfer(fwd_transfer).then( function(signed_fwd_transfer) {
+        batch = [];
+        for ( i = 0 ; i < jsonRPCRequests.length ; i++) {
+            batch.push({"tx": jsonRPCRequests[i].params[0], "signature": jsonRPCRequests[i].params[1]});
+        }
+        batch.push({"tx": signed_fwd_transfer.tx, "signature": signed_fwd_transfer.ethereumSignature});
+        return client.requestAdvanced({jsonrpc: JSONRPC, method: "submit_txs_batch", params: [batch, []], id: createID()}).then( function(batch_resp) {   // send batch, not signed
+            if (typeof batch_resp.result == 'undefined') {
+	            sem_release();
+                responses = [];
+                for ( i = 0 ; i < jsonRPCRequests.length ; i++) {
+				    response = Object.assign({}, batch_resp);  // TODO better message?
+				    response.id = jsonRPCRequests[i].id;
+                    responses.push(response);
+                    resolve_funcs[i](response);
+                }
+                process_client_req();
+                return responses;
+            }
+	        max_depth = (waiting_threads == 2) ? 1000000 : 3;   // when third thread gonna wait for the status, let it wait long and block subsequent requests
+            ensureTxStatus(batch_resp.result[jsonRPCRequests.length], 0, max_depth, sem_release);        //this function releases the semaphore in a promise
+            responses = [];
+            for ( i = 0 ; i < jsonRPCRequests.length ; i++) {
+                response = {jsonrpc: JSONRPC, id: jsonRPCRequests[i].id, result: batch_resp.result[i]};
+                resolve_funcs[i](response);
+            }
+            return responses;
+        }).catch ( (error) => {
+	        console.log('error when submit_txs_batch');
+            console.log(error);
+	        sem_release();
+            responses = [];
+            for ( i = 0 ; i < jsonRPCRequests.length ; i++) {
+                response = processError(error, jsonRPCRequests[i]);
+                responses.push(response);
+                resolve_funcs[i](response);
+            }
+            process_client_req();
+            return responses;
         });
+    });
 }
 
-function sendSubsidizedTxWithNonce(jsonRPCRequest, fwd_transfer, sem_release) {
-                        return syncWallet.signSyncTransfer(fwd_transfer).then( function(signed_fwd_transfer) {
-                                batch = [
-                                    {"tx": jsonRPCRequest.params[0], "signature": jsonRPCRequest.params[1]},
-                                    {"tx": signed_fwd_transfer.tx, "signature": signed_fwd_transfer.ethereumSignature}
-                                ];
-                                return client.requestAdvanced({jsonrpc: jsonRPCRequest.jsonrpc, method: "submit_txs_batch", params: [batch, []], id: createID()}).then( function(batch_resp) {   // send batch, not signed
-                                        if (typeof batch_resp.result == 'undefined') {
-                                            batch_resp.id = jsonRPCRequest.id;
-					    sem_release();
-                                            return batch_resp; // TODO better message?
-                                        }
-					max_depth = (waiting_threads == 2) ? 1000000 : 3;   // when third thread gonna wait for the status, let it wait long and block subsequent requests
-                                        ensureTxStatus(batch_resp.result[1], 0, max_depth, sem_release);        //this function releases the semaphore in a promise
-                                        return {jsonrpc: jsonRPCRequest.jsonrpc, id: jsonRPCRequest.id, result: batch_resp.result[0]};
-                                    }).catch ( (error) => {
-					console.log('error when submit_txs_batch');
-                                        console.log(error);
-					sem_release();
-                                        return processError(error, jsonRPCRequest);
-                                    });
-                            });
+client_req_resolvers = [];
+processing = false;
 
+function sendSubsidizedTx(jsonRPCRequest, bn_subsidation_unpacked, bn_exp_fwd_fee) {
+    return new Promise(resolve => {
+        client_req_resolvers.push([jsonRPCRequest, bn_subsidation_unpacked, bn_exp_fwd_fee, resolve]);
+        if (! processing) {
+            processing = true;
+            new Promise(resolve1 => {
+                process_client_req();
+                resolve1();
+            });
+        }
+    });
 }
 
-function sendSubsidizedTx(jsonRPCRequest, bn_batch_fee) {
+function process_client_req() {
+    if (client_req_resolvers.length == 0) {
+        processing = false;
+        return;
+    }
+
+    jsonRPCRequests = [];
+    resolve_funcs = [];
+    [jsonRPCRequest_0, bn_subsidation_unpacked_0, bn_exp_fwd_fee_0, resolve_0] = client_req_resolvers.shift();
+    client_address = jsonRPCRequest_0.params[0].from;
+    jsonRPCRequests.push(jsonRPCRequest_0);
+    bn_subsidation_unpacked = bn_subsidation_unpacked_0;
+    bn_exp_fwd_fee = bn_exp_fwd_fee_0;
+    resolve_funcs.push(resolve_0);
+    for ( i = 0 ; i < client_req_resolvers.length ; i ++) {
+        [jsonRPCRequest_i, bn_subsidation_unpacked_i, bn_exp_fwd_fee_i, resolve_i] = client_req_resolvers[i];
+        if (client_address == jsonRPCRequest_i.params[0].from) {
+            jsonRPCRequests.push(jsonRPCRequest_i);
+            bn_subsidation_unpacked = bn_subsidation_unpacked.add(bn_subsidation_unpacked_i);
+            bn_exp_fwd_fee = bn_exp_fwd_fee_i;  // the last one is taken
+            resolve_funcs.push(resolve_i);
+            client_req_resolvers.splice(i, 1);
+            i--;
+        }
+    }
+    bn_batch_fee_unpacked = bn_subsidation_unpacked.add(bn_exp_fwd_fee);
+    bn_batch_fee = zksync.utils.closestGreaterOrEqPackableTransactionFee(bn_batch_fee_unpacked);
+
+    // returning is not necessary, it is deprecated code
     return nonce_semaphore.acquire().then( function([sem_value, sem_release]) {  // acquire the semaphore
-            try {
-		if (waiting_threads == 0) {
-                    return client.requestAdvanced({jsonrpc: jsonRPCRequest.jsonrpc, method: "account_info", params: [fwdAddress], id: createID()}).then( function(fwd_account_resp) {
-			    if (typeof fwd_account_resp.result == 'undefined') {
-				fwd_account_resp.id = jsonRPCRequest.id;
-				return fwd_account_resp;  // TODO return something else
-			    }
-			    last_nonce = fwd_account_resp.result.committed.nonce;
-                            fwd_transfer = {             // sign forwarder's transaction
-                                to: fwdAddress,
-                                token: glmSymbol,
-                                amount: ethers.utils.parseEther("0.0"),
-                                fee: bn_batch_fee,
-                                nonce: last_nonce
-                            };
-                            return sendSubsidizedTxWithNonce(jsonRPCRequest, fwd_transfer, sem_release);
-                        }).catch( function(err) {
-                            sem_release();                 // release the semaphore in case of an exception
-			    console.log('error getNonce');
-			    console.log(err);
-                            return processError(err, jsonRPCRequest);
-                        });
-		} else {
+        try {
+		    if (waiting_threads == 0) {
+                return client.requestAdvanced({jsonrpc: JSONRPC, method: "account_info", params: [fwdAddress], id: createID()}).then( function(fwd_account_resp) {
+			        if (typeof fwd_account_resp.result == 'undefined') {
+				        sem_release();
+                        responses = [];
+                        for ( i = 0 ; i < jsonRPCRequests.length ; i++) {
+				            response = Object.assign({}, fwd_account_resp);  // TODO return something else
+				            response.id = jsonRPCRequests[i].id;
+                            responses.push(response);
+                            resolve_funcs[i](response);
+                        }
+                        process_client_req();
+                        return responses;
+			        }
+			        last_nonce = fwd_account_resp.result.committed.nonce;
                     fwd_transfer = {             // sign forwarder's transaction
                         to: fwdAddress,
                         token: glmSymbol,
                         amount: ethers.utils.parseEther("0.0"),
                         fee: bn_batch_fee,
-                        nonce: last_nonce+waiting_threads
+                        nonce: last_nonce
                     };
-                    return sendSubsidizedTxWithNonce(jsonRPCRequest, fwd_transfer, sem_release);
-		}
-            } catch (er) {
-                sem_release();            // just in case
-		console.log('error sendSubsidizedTx');
-		console.log(er);
-                return processError(er, jsonRPCRequest);
+                    return sendSubsidizedTxWithNonce(jsonRPCRequests, fwd_transfer, sem_release, resolve_funcs);
+                }).catch( function(err) {
+			        console.log('error getNonce');
+			        console.log(err);
+                    sem_release();                 // release the semaphore in case of an exception
+                    responses = [];
+                    for ( i = 0 ; i < jsonRPCRequests.length ; i++) {
+                        response = processError(err, jsonRPCRequests[i]);
+                        responses.push(response);
+                        resolve_funcs[i](response);
+                    }
+                    process_client_req();
+                    return responses;
+                });
+		    } else {
+                fwd_transfer = {             // sign forwarder's transaction
+                    to: fwdAddress,
+                    token: glmSymbol,
+                    amount: ethers.utils.parseEther("0.0"),
+                    fee: bn_batch_fee,
+                    nonce: last_nonce+waiting_threads
+                };
+                return sendSubsidizedTxWithNonce(jsonRPCRequests, fwd_transfer, sem_release, resolve_funcs);
+		    }
+        } catch (er) {
+		    console.log('error sendSubsidizedTx');
+		    console.log(er);
+            sem_release();            // just in case
+            responses = [];
+            for ( i = 0 ; i < jsonRPCRequests.length ; i++) {
+                response = processError(er, jsonRPCRequests[i]);
+                responses.push(response);
+                resolve_funcs[i](response);
             }
-        });
+            process_client_req();
+            return responses;
+        }
+    });
 }
 
 server.addMethodAdvanced("tx_submit", (jsonRPCRequest) => {
@@ -288,43 +376,42 @@ server.addMethodAdvanced("tx_submit", (jsonRPCRequest) => {
     }
 
     return client.requestAdvanced({jsonrpc: jsonRPCRequest.jsonrpc, method: "get_tx_fee", params: ["Transfer", jsonRPCRequest.params[0].to, glmSymbol], id: createID()}).then(function(exp_client_tx_fee_resp){    // get original client's fee
-            if (typeof exp_client_tx_fee_resp.result == 'undefined') {
-                exp_client_tx_fee_resp.id = jsonRPCRequest.id;
-                return exp_client_tx_fee_resp;  // TODO maybe another error code?
+        if (typeof exp_client_tx_fee_resp.result == 'undefined') {
+            exp_client_tx_fee_resp.id = jsonRPCRequest.id;
+            return exp_client_tx_fee_resp;  // TODO maybe another error code?
 	    }
 	    exp_client_tx_fee = exp_client_tx_fee_resp.result;
 	    bn_exp_client_fee = ethers.BigNumber.from(exp_client_tx_fee.totalFee);
 	    bn_subs_client_fee = zksync.utils.closestPackableTransactionFee(bn_exp_client_fee.mul(subsidizedFeeRate).div(100));
 	    return client.requestAdvanced({jsonrpc: jsonRPCRequest.jsonrpc, method: "get_tx_fee", params: ["Transfer", fwdAddress, glmSymbol], id: createID()}).then(function(exp_fwd_tx_fee_resp){   // get original forwarder's fee
 		    if (typeof exp_fwd_tx_fee_resp.result == 'undefined') {
-                        exp_fwd_tx_fee_resp.id = jsonRPCRequest.id;
-                        return exp_fwd_tx_fee_resp;  // TODO maybe another error code?
-                    }
-                    exp_fwd_tx_fee = exp_fwd_tx_fee_resp.result;
+                exp_fwd_tx_fee_resp.id = jsonRPCRequest.id;
+                return exp_fwd_tx_fee_resp;  // TODO maybe another error code?
+            }
+            exp_fwd_tx_fee = exp_fwd_tx_fee_resp.result;
 		    bn_exp_fwd_fee = ethers.BigNumber.from(exp_fwd_tx_fee.totalFee);
 		    bn_rcv_client_fee = ethers.BigNumber.from(jsonRPCRequest.params[0].fee);
 		    if (bn_rcv_client_fee.gte(bn_exp_client_fee)) {  // if it does not need subsidizing
-                        return forwardRequestAdvanced(jsonRPCRequest);
+                return forwardRequestAdvanced(jsonRPCRequest);
 		    }
 		    if (bn_rcv_client_fee.lt(bn_subs_client_fee)) {   // client's fee is too low, we pass tx anyway but subsidising is limited
-		        bn_batch_fee_unpacked = bn_exp_client_fee.add(bn_exp_fwd_fee).sub(bn_subs_client_fee);
+		        bn_subsidation_unpacked = bn_exp_client_fee.sub(bn_subs_client_fee);
 		    } else {
-		        bn_batch_fee_unpacked = bn_exp_client_fee.add(bn_exp_fwd_fee).sub(bn_rcv_client_fee);
+		        bn_subsidation_unpacked = bn_exp_client_fee.sub(bn_rcv_client_fee);
 		    }
-		    bn_batch_fee = zksync.utils.closestGreaterOrEqPackableTransactionFee(bn_batch_fee_unpacked);
 
-		    return sendSubsidizedTx(jsonRPCRequest, bn_batch_fee);
+		    return sendSubsidizedTx(jsonRPCRequest, bn_subsidation_unpacked, bn_exp_fwd_fee);
 
 		}).catch( (error) => {
 		    console.log('error get_tx_fee 2');
-                    console.log(error);
-                    return processError(error, jsonRPCRequest);
-		});
-        }).catch( (error) => {
-	    console.log('error get_tx_fee 1');
             console.log(error);
+            return processError(error, jsonRPCRequest);
+		});
+    }).catch( (error) => {
+	    console.log('error get_tx_fee 1');
+        console.log(error);
 	    return processError(error, jsonRPCRequest);
-        });
+    });
 });
 
 
